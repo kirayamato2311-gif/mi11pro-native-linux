@@ -15,6 +15,6 @@ Dependensi dan batasan:
 - Pengujian berhenti jika peran berubah lebih dari tiga kali dalam 30 detik. Restart layanan otomatis dinonaktifkan untuk menghindari loop reset.
 - Perekaman kernel terus-menerus hanya aktif jika `/etc/mars-managed-usb-debug` ada; log perpindahan biasa tetap tersedia.
 - Pembacaan melalui USB PC menunjukkan pengisian dari SDP dengan batas 500 mA. Label charge type `Fast` dari firmware **bukan** bukti pengisian 67 W.
-- Cold boot, suspend, keandalan hotplug panjang, semua kombinasi charger/hub, serta PD sink + Ethernet bersamaan belum dikualifikasi. Ambang pengisian masih belum dibuat.
+- Cold boot, suspend, keandalan hotplug panjang, semua kombinasi charger/hub, serta PD sink + Ethernet bersamaan belum dikualifikasi. Ambang pengisian kemudian dibuat secara terpisah; lihat `CHARGING.id.md`.
 
 Pertahankan tree host tetap dan peripheral tetap sebagai konfigurasi referensi/pemulihan. Repositori ini tidak membagikan binary boot, provisioning root filesystem, atau otomasi flashing.

@@ -15,6 +15,6 @@ Dependencies and limits:
 - A transition limit stops the test if roles change more than three times in 30 seconds. Automatic service restart is disabled to avoid a reset loop.
 - Kernel follow logging is opt-in via `/etc/mars-managed-usb-debug`; ordinary transition logs remain available.
 - USB PC telemetry showed charging from an SDP source with a 500 mA limit. The firmware's `Fast` charge-type label is **not** proof of 67 W charging.
-- Cold boot, suspend, long-term hotplug reliability, all charger/hub combinations and simultaneous PD sink + Ethernet remain unqualified. Charge thresholds are still not implemented.
+- Cold boot, suspend, long-term hotplug reliability, all charger/hub combinations and simultaneous PD sink + Ethernet remain unqualified. Charge thresholds were subsequently implemented separately; see `CHARGING.en.md`.
 
 Keep the separate fixed-host and fixed-peripheral trees as recovery/reference configurations. No boot binaries, root filesystem provisioning or flashing automation are distributed here.

@@ -242,10 +242,29 @@ index 395040346..40c83ecfa 100644
  	if (ret)
  		return ret;
 diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
-index ec163d1bc..004de2925 100644
+index ec163d1bc..cf5c58982 100644
 --- a/drivers/power/supply/qcom_battmgr.c
 +++ b/drivers/power/supply/qcom_battmgr.c
-@@ -345,6 +345,12 @@ static int qcom_battmgr_request_property(struct qcom_battmgr *battmgr, int opcod
+@@ -38,6 +38,10 @@ enum qcom_battmgr_variant {
+ 
+ #define BATTMGR_BAT_CHARGE_TIME		0xd
+ 
++#define BATTMGR_XM_PROPERTY_GET	0x50
++#define BATTMGR_XM_PROPERTY_SET	0x51
++#define MARS_XM_INPUT_SUSPEND	44
++
+ #define BATTMGR_BAT_PROPERTY_GET	0x30
+ #define BATTMGR_BAT_PROPERTY_SET	0x31
+ #define BATT_STATUS			0
+@@ -297,6 +301,7 @@ struct qcom_battmgr {
+ 	struct completion ack;
+ 
+ 	bool service_up;
++	bool mars_input_suspended;
+ 
+ 	struct qcom_battmgr_info info;
+ 	struct qcom_battmgr_status status;
+@@ -345,9 +350,63 @@ static int qcom_battmgr_request_property(struct qcom_battmgr *battmgr, int opcod
  		.value = cpu_to_le32(value),
  	};
  
@@ -258,7 +277,58 @@ index ec163d1bc..004de2925 100644
  	return qcom_battmgr_request(battmgr, &request, sizeof(request));
  }
  
-@@ -1090,12 +1096,15 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
++/* Mars OS1.0.11 stock qti_battery_charger_main: input_suspend ID 44.
++ * Confirmed from the stock module's input_suspend_show/store request.
++ * Older venus/star source enums are not wire-compatible for XM properties.
++ */
++static ssize_t mars_input_suspend_show(struct device *dev,
++				      struct device_attribute *attr, char *buf)
++{
++	struct qcom_battmgr *battmgr = dev_get_drvdata(dev);
++	int ret;
++
++	if (!battmgr->service_up)
++		return -ENODEV;
++	mutex_lock(&battmgr->lock);
++	ret = qcom_battmgr_request_property(battmgr, BATTMGR_XM_PROPERTY_GET,
++					    MARS_XM_INPUT_SUSPEND, 0);
++	if (!ret)
++		ret = sysfs_emit(buf, "%u\n", battmgr->mars_input_suspended);
++	mutex_unlock(&battmgr->lock);
++	return ret;
++}
++
++static ssize_t mars_input_suspend_store(struct device *dev,
++				       struct device_attribute *attr,
++				       const char *buf, size_t count)
++{
++	struct qcom_battmgr *battmgr = dev_get_drvdata(dev);
++	bool suspended;
++	int ret;
++
++	ret = kstrtobool(buf, &suspended);
++	if (ret)
++		return ret;
++	if (!battmgr->service_up)
++		return -ENODEV;
++	mutex_lock(&battmgr->lock);
++	ret = qcom_battmgr_request_property(battmgr, BATTMGR_XM_PROPERTY_SET,
++					    MARS_XM_INPUT_SUSPEND, suspended);
++	mutex_unlock(&battmgr->lock);
++	return ret ? ret : count;
++}
++static DEVICE_ATTR_RW(mars_input_suspend);
++
++static struct attribute *mars_battmgr_attrs[] = {
++	&dev_attr_mars_input_suspend.attr,
++	NULL,
++};
++ATTRIBUTE_GROUPS(mars_battmgr);
++
+ static int qcom_battmgr_update_status(struct qcom_battmgr *battmgr)
+ {
+ 	struct qcom_battmgr_update_request request = {
+@@ -1090,12 +1149,15 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
  	switch (opcode) {
  	case BATTMGR_BAT_PROPERTY_GET:
  		property = le32_to_cpu(resp->intval.property);
@@ -274,7 +344,7 @@ index ec163d1bc..004de2925 100644
  				return;
  			}
  		} else {
-@@ -1104,6 +1113,7 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+@@ -1104,6 +1166,7 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
  					 "invalid payload length for %#x request: %zd\n",
  					 property, payload_len);
  				battmgr->error = -ENODATA;
@@ -282,6 +352,43 @@ index ec163d1bc..004de2925 100644
  				return;
  			}
  
+@@ -1252,6 +1315,21 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 			break;
+ 		}
+ 		break;
++
++	case BATTMGR_XM_PROPERTY_GET:
++	case BATTMGR_XM_PROPERTY_SET:
++		if (payload_len != sizeof(resp->intval) ||
++		    le32_to_cpu(resp->intval.property) != MARS_XM_INPUT_SUSPEND) {
++			battmgr->error = -EPROTO;
++		} else if (le32_to_cpu(resp->intval.result)) {
++			battmgr->error = -EIO;
++		} else if (opcode == BATTMGR_XM_PROPERTY_GET) {
++			if (le32_to_cpu(resp->intval.value) > 1)
++				battmgr->error = -ERANGE;
++			else
++				battmgr->mars_input_suspended = le32_to_cpu(resp->intval.value);
++		}
++		break;
+ 	case BATTMGR_REQUEST_NOTIFICATION:
+ 		battmgr->error = 0;
+ 		break;
+@@ -1389,7 +1467,13 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
+ 							  qcom_battmgr_callback,
+ 							  qcom_battmgr_pdr_notify,
+ 							  battmgr);
+-	return PTR_ERR_OR_ZERO(battmgr->client);
++
++	if (IS_ERR(battmgr->client))
++		return PTR_ERR(battmgr->client);
++	dev_set_drvdata(dev, battmgr);
++	if (of_machine_is_compatible("xiaomi,mars"))
++		return devm_device_add_groups(dev, mars_battmgr_groups);
++	return 0;
+ }
+ 
+ static const struct auxiliary_device_id qcom_battmgr_id_table[] = {
 diff --git a/drivers/remoteproc/qcom_q6v5_pas.c b/drivers/remoteproc/qcom_q6v5_pas.c
 index 913a5d206..76d80831f 100644
 --- a/drivers/remoteproc/qcom_q6v5_pas.c

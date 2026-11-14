@@ -1,0 +1,10 @@
+[Unit]
+Description=Apply Xiaomi mars battery charge hysteresis
+ConditionPathExists=/sys/class/power_supply/qcom-battmgr-bat/device/mars_input_suspend
+After=mars-pmic-start.service
+Wants=mars-pmic-start.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/mars-charge-limit
+ExecStart=/usr/local/sbin/mars-charge-limit

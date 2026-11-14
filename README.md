@@ -24,7 +24,7 @@ Linux boots on the phone itself, without Android, Termux, a container, or a virt
 | USB host ↔ peripheral switching | Experimental userspace workaround: **two PC → Ethernet → PC cycles passed without phone reboot**, using controller reprobe on return to PC; long-term reliability unqualified |
 | Temperature | TSENS readings available; Xiaomi battery property-number correction also tested |
 | Charging while using Ethernet | **Not yet verified**; PD splitter testing pending |
-| Charge limit at 80–90% | **Not implemented** |
+| Charge limit | Experimental **85% stop / 80% resume** userspace policy, using firmware-specific Xiaomi input suspend; stop/resume verified over USB PC at temporary test thresholds |
 | CPU frequency / cooling policy | **Not finished**; do not assume production server readiness |
 | Wi-Fi / cellular modem | Not brought up in this port; the test phone also has pre-existing radio faults |
 | Camera / audio / GPU acceleration / suspend | Not validated |
@@ -39,7 +39,7 @@ The test phone has physical display line defects. Native display operation does 
 - `patches/linux/`: current kernel changes, **including diagnostic workarounds**.
 - `kernel/config/` and `kernel/devicetree/`: kernel configuration and expanded device trees for the two tested USB modes.
 - `kernel/panel/`: experimental panel driver; generate its command header from your own matching stock panel data.
-- `userspace/`: Power-button daemon and experimental managed USB role service.
+- `userspace/`: Power-button daemon, experimental managed USB service, and charge-limit timer/policy.
 - `reference/initramfs/`: development init source for review, not a ready-to-run ramdisk.
 - `tools/`: source preparation, panel command generation, FDT inspection and export checks.
 - `sources.json`: exact upstream commits and UEFI submodule revisions.
@@ -52,5 +52,7 @@ The test phone has physical display line defects. Native display operation does 
 4. See [contributing](CONTRIBUTING.md) and [licenses/provenance](LICENSE.md).
 
 The [managed USB experiment](docs/MANAGED_USB.en.md) / [catatan USB terkontrol](docs/MANAGED_USB.id.md) documents the later role-switching workaround. Normal boot with USB PC connected was also verified after installing that image on the development phone. This does not provide a public installation image or establish simultaneous PD charging + Ethernet.
+
+See [charge control](docs/CHARGING.en.md) / [kontrol pengisian](docs/CHARGING.id.md) for the firmware-specific charge-limit protocol and its limits. This suspends charger input; it is not battery bypass.
 
 No proprietary EFI/ADSP/modem firmware, personal partition backups, IMEI/QCN files, SSH credentials or Tailscale state are distributed. This is an independent community experiment, not an official Xiaomi, Qualcomm, Microsoft, or Project Silicium release. Upstream projects are credited without implying endorsement.

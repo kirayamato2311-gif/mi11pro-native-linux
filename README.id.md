@@ -24,7 +24,7 @@ Linux berjalan langsung pada HP, tanpa Android, Termux, container, atau mesin vi
 | Perpindahan USB host ↔ peripheral | Workaround userspace eksperimental: **dua siklus PC → Ethernet → PC lolos tanpa restart HP**, memakai pemuatan ulang controller saat kembali ke PC; keandalan jangka panjang belum dikualifikasi |
 | Suhu | Sensor TSENS tersedia; koreksi nomor properti baterai Xiaomi juga sudah diuji |
 | Pengisian sambil memakai Ethernet | **Belum terverifikasi**; menunggu pengujian splitter PD |
-| Batas pengisian 80–90% | **Belum dibuat** |
+| Batas pengisian | Aturan userspace eksperimental **berhenti 85% / mulai 80%**, memakai input suspend khusus firmware Xiaomi; fungsi berhenti/lanjut diuji melalui USB PC dengan ambang sementara |
 | Frekuensi CPU / kebijakan pendinginan | **Belum selesai**; belum dinyatakan layak sebagai server produksi |
 | Wi-Fi / modem seluler | Belum diaktifkan pada port ini; perangkat uji juga memiliki gangguan radio sebelumnya |
 | Kamera / audio / akselerasi GPU / suspend | Belum divalidasi |
@@ -39,7 +39,7 @@ Layar perangkat uji memiliki kerusakan garis fisik. Keberhasilan driver layar bu
 - `patches/linux/`: perubahan kernel saat ini, **termasuk workaround diagnostik**.
 - `kernel/config/` dan `kernel/devicetree/`: konfigurasi kernel dan device tree yang sudah diekspansi untuk dua mode USB yang diuji.
 - `kernel/panel/`: driver panel eksperimental; header perintah dibuat dari data panel firmware stok milik pengguna sendiri yang cocok.
-- `userspace/`: kode daemon tombol Power dan layanan perpindahan USB eksperimental.
+- `userspace/`: daemon tombol Power, layanan USB eksperimental, serta timer/aturan batas pengisian.
 - `reference/initramfs/`: kode init pengembangan untuk dipelajari, bukan ramdisk siap pakai.
 - `tools/`: persiapan sumber, generator perintah panel, pemeriksaan FDT, dan pemeriksaan ekspor.
 - `sources.json`: commit upstream dan revisi submodule UEFI yang tepat.
@@ -52,5 +52,7 @@ Layar perangkat uji memiliki kerusakan garis fisik. Keberhasilan driver layar bu
 4. Lihat [panduan kontribusi](CONTRIBUTING.md) serta [lisensi dan asal sumber](LICENSE.md).
 
 [Catatan USB terkontrol](docs/MANAGED_USB.id.md) / [English notes](docs/MANAGED_USB.en.md) menjelaskan workaround perpindahan peran yang diuji berikutnya. Boot normal dengan USB PC terpasang juga berhasil setelah image tersebut dipasang pada HP pengembangan. Ini belum menyediakan image instalasi publik atau membuktikan pengisian PD sambil memakai Ethernet.
+
+Lihat [kontrol pengisian](docs/CHARGING.id.md) / [English notes](docs/CHARGING.en.md) untuk protokol batas baterai yang khusus firmware dan keterbatasannya. Kontrol ini menghentikan masukan charger, bukan bypass baterai.
 
 Repositori ini tidak membagikan firmware EFI/ADSP/modem proprietary, backup partisi pribadi, IMEI/QCN, kredensial SSH, atau status autentikasi Tailscale. Ini eksperimen komunitas independen, bukan rilis resmi Xiaomi, Qualcomm, Microsoft, maupun Project Silicium. Pencantuman proyek asal tidak menyiratkan dukungan resmi mereka.
