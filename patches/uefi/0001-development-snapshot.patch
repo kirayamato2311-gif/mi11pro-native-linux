@@ -1,0 +1,270 @@
+diff --git a/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManager.c b/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManager.c
+index fdf407b..61ac5a6 100644
+--- a/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManager.c
++++ b/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManager.c
+@@ -6,6 +6,7 @@
+ **/
+ 
+ #include <Library/PcdLib.h>
++#include <Library/BaseLib.h>
+ #include <Library/DebugLib.h>
+ #include <Library/AcpiTableUpdateLib.h>
+ #include <Library/DeviceBootManagerLib.h>
+@@ -28,6 +29,8 @@
+ //
+ STATIC UINTN XPos = 0;
+ STATIC UINTN YPos = 0;
++VOID MarsStorageProbe (VOID);
++VOID MarsLinuxProbe (VOID);
+ 
+ //
+ // BDS Combo Message
+@@ -38,6 +41,39 @@ VOID
+ EFIAPI
+ PlatformBootManagerBeforeConsole ()
+ {
++  // Use static storage so diagnostics remain available when allocation fails.
++  if (AsciiStrCmp ((CHAR8 *)PcdGetPtr (PcdSmbiosSystemRetailModel), "mars") == 0) {
++    STATIC UINT64 MapStorage[8192];
++    UINTN MapSize = sizeof (MapStorage);
++    UINTN MapKey;
++    UINTN DescriptorSize;
++    UINT32 DescriptorVersion;
++    EFI_STATUS MapStatus;
++    UINT64 FreePages = 0;
++    UINT64 LargestPages = 0;
++    UINTN Offset;
++    EFI_MEMORY_DESCRIPTOR *Entry;
++
++    MapStatus = gBS->GetMemoryMap (&MapSize, (EFI_MEMORY_DESCRIPTOR *)MapStorage,
++                    &MapKey, &DescriptorSize, &DescriptorVersion);
++    DEBUG ((DEBUG_ERROR, "MARS DIAG GetMemoryMap=%r bytes=%lu\n", MapStatus, (UINT64)MapSize));
++    if (!EFI_ERROR (MapStatus) && DescriptorSize >= sizeof (EFI_MEMORY_DESCRIPTOR)) {
++      for (Offset = 0; Offset + DescriptorSize <= MapSize; Offset += DescriptorSize) {
++        Entry = (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)MapStorage + Offset);
++        if (Entry->Type == EfiConventionalMemory) {
++          FreePages += Entry->NumberOfPages;
++          if (Entry->NumberOfPages > LargestPages) {
++            LargestPages = Entry->NumberOfPages;
++          }
++          DEBUG ((DEBUG_ERROR, "MARS FREE base=%lx pages=%lu attr=%lx\n",
++            Entry->PhysicalStart, Entry->NumberOfPages, Entry->Attribute));
++        }
++      }
++      DEBUG ((DEBUG_ERROR, "MARS FREE total=%lu KiB largest=%lu KiB\n", FreePages * 4, LargestPages * 4));
++      DEBUG ((DEBUG_ERROR, "MARS DIAG continuing to Linux test\n"));
++    }
++  }
++
+   // Signal End Of DXE
+   EfiEventGroupSignal (&gEfiEndOfDxeEventGroupGuid);
+ 
+@@ -207,6 +243,26 @@ PlatformBootManagerUnableToBoot ()
+   // Execute Secondary Unable To Boot
+   DeviceBootManagerUnableToBoot ();
+ 
++  // Keep experimental mars bring-up interactive when no OS is installed.
++  if (AsciiStrCmp ((CHAR8 *)PcdGetPtr (PcdSmbiosSystemRetailModel), "mars") == 0) {
++    EFI_BOOT_MANAGER_LOAD_OPTION Menu;
++
++    gBS->SetWatchdogTimer (0, 0, 0, NULL);
++    Print (L"mars UEFI: no bootable OS. Opening Boot Manager.\n");
++    MarsLinuxProbe ();
++    while (TRUE) {
++      Status = MsBootOptionsLibGetBootManagerMenu (&Menu, NULL);
++      if (EFI_ERROR (Status)) {
++        Print (L"Boot Manager unavailable: %r. Holding for diagnosis.\n", Status);
++        CpuDeadLoop ();
++      }
++      EfiBootManagerBoot (&Menu);
++      EfiBootManagerFreeLoadOption (&Menu);
++      Print (L"Boot Manager returned; reopening in 2 seconds.\n");
++      gBS->Stall (2000000);
++    }
++  }
++
+   // Display No Boot OS Logo
+   Status = DisplayBootGraphic (BG_NO_BOOT_OS);
+   if (EFI_ERROR (Status)) {
+diff --git a/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManagerLib.inf b/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManagerLib.inf
+index 2310dc6..810d8c3 100644
+--- a/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManagerLib.inf
++++ b/Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManagerLib.inf
+@@ -13,6 +13,8 @@
+   LIBRARY_CLASS                  = PlatformBootManagerLib|DXE_DRIVER
+ 
+ [Sources]
++  LinuxProbe.c
++  StorageProbe.c
+   BootManager.c
+   KeyCallback.c
+ 
+@@ -25,6 +27,10 @@
+   SiliciumPkg/SiliciumPkg.dec
+ 
+ [LibraryClasses]
++  UefiBootManagerLib
++  FdtLib
++  HobLib
++  BaseLib
+   PcdLib
+   DebugLib
+   AcpiTableUpdateLib
+@@ -39,12 +45,18 @@
+   PrintLib
+ 
+ [Pcd]
++  gSiliciumPkgTokenSpaceGuid.PcdSmbiosSystemRetailModel
+   gEfiMdePkgTokenSpaceGuid.PcdPlatformBootTimeOut
+ 
+ [Guids]
++  gMarsBootDtbHobGuid
+   gEfiEndOfDxeEventGroupGuid
+ 
+ [Protocols]
++  gEfiRamDiskProtocolGuid
++  gEfiLoadedImageProtocolGuid
++  gEfiBlockIoProtocolGuid
++  gEfiSimpleFileSystemProtocolGuid
+   gKeypadDeviceProtocolGuid
+   gEfiGraphicsOutputProtocolGuid
+   gEfiSimpleTextInputExProtocolGuid
+diff --git a/Silicon/Silicium/SiliciumPkg/Sec/AArch64/ModuleEntryPoint.S b/Silicon/Silicium/SiliciumPkg/Sec/AArch64/ModuleEntryPoint.S
+index 0c05ffa..571c09e 100644
+--- a/Silicon/Silicium/SiliciumPkg/Sec/AArch64/ModuleEntryPoint.S
++++ b/Silicon/Silicium/SiliciumPkg/Sec/AArch64/ModuleEntryPoint.S
+@@ -13,6 +13,8 @@
+ .set CTRL_SPAN_BIT, BIT23
+ 
+ ASM_FUNC (_ModuleEntryPoint)
++  // Preserve Android arm64 boot x0 across ABI-conforming initialization calls.
++  mov   x19, x0
+   // Do Platform Specific Initialization
+   bl    ASM_PFX (PlatformAssemblyInitialize)
+ 
+@@ -51,13 +53,14 @@ ASM_PFX (MainEntryPoint):
+   b.lt  0b
+ 
+   // Set Jump Location
+-  ldr   x0, =ASM_PFX (SecEntry)
++  ldr   x16, =ASM_PFX (SecEntry)
++  mov   x0, x19
+ 
+   // Clear Frame Pointer
+   mov   x29, xzr
+ 
+   // Jump to C Code
+-  blr   x0
++  blr   x16
+ 
+   // Do Infinite Spin
+   b     .
+diff --git a/Silicon/Silicium/SiliciumPkg/Sec/Sec.c b/Silicon/Silicium/SiliciumPkg/Sec/Sec.c
+index 8d586b3..b11dc0d 100644
+--- a/Silicon/Silicium/SiliciumPkg/Sec/Sec.c
++++ b/Silicon/Silicium/SiliciumPkg/Sec/Sec.c
+@@ -15,6 +15,7 @@
+ #include <Library/MemoryMapHelperLib.h>
+ #include <Library/TimerLib.h>
+ #include <Library/HobLib.h>
++#include <Library/FdtLib.h>
+ 
+ #include "Sec.h"
+ 
+@@ -90,7 +91,7 @@ InitializeMemory (VOID)
+ 
+ STATIC
+ VOID
+-SecMain (VOID)
++SecMain (IN UINTN BootDtb)
+ {
+   EFI_STATUS Status;
+ 
+@@ -106,6 +107,7 @@ SecMain (VOID)
+ 
+   // Print Firmware Version
+   PrintFirmwareVersion ();
++  DEBUG ((EFI_D_ERROR, "BOOT HANDOFF incoming DTB x0=0x%lx (not dereferenced)\n", (UINT64)BootDtb));
+ 
+   // Initialize Debug Agent
+   InitializeDebugAgent (DEBUG_AGENT_INIT_POSTMEM_SEC, NULL, NULL);
+@@ -119,6 +121,31 @@ SecMain (VOID)
+   }
+ 
+   // Build CPU HOB
++  BuildGuidDataHob (&gMarsBootDtbHobGuid, &BootDtb, sizeof (BootDtb));
++  DEBUG ((EFI_D_ERROR, "BOOT HANDOFF DTB x0=0x%lx; pause 30 seconds (pointer only)\n", (UINT64)BootDtb));
++  if ((BootDtb & 7) == 0 && BootDtb >= 0xA0000000 && BootDtb <= 0xB9600000) {
++    INT32 FdtStatus = FdtCheckHeader ((VOID *)BootDtb);
++    DEBUG ((EFI_D_ERROR, "FDT DIAG header=%d\n", FdtStatus));
++    if (FdtStatus == 0 && FdtGetHeader ((VOID *)BootDtb, TotalSize) <= 0x100000 &&
++        FdtGetHeader ((VOID *)BootDtb, TotalSize) <= 0xB9700000 - BootDtb) {
++      INT32 Chosen = FdtPathOffset ((VOID *)BootDtb, "/chosen");
++      INT32 Length;
++      CONST UINT32 *Value;
++      Value = FdtGetProp ((VOID *)BootDtb, Chosen, "linux,initrd-start", &Length);
++      if (Value != NULL && (Length == 4 || Length == 8)) {
++        UINT64 Start = Fdt32ToCpu (Value[0]);
++        if (Length == 8) Start = (Start << 32) | Fdt32ToCpu (Value[1]);
++        DEBUG ((EFI_D_ERROR, "FDT DIAG initrd-start=0x%lx cells-bytes=%d\n", Start, Length));
++      }
++      Value = FdtGetProp ((VOID *)BootDtb, Chosen, "linux,initrd-end", &Length);
++      if (Value != NULL && (Length == 4 || Length == 8)) {
++        UINT64 End = Fdt32ToCpu (Value[0]);
++        if (Length == 8) End = (End << 32) | Fdt32ToCpu (Value[1]);
++        DEBUG ((EFI_D_ERROR, "FDT DIAG initrd-end=0x%lx cells-bytes=%d\n", End, Length));
++      }
++    }
++  }
++  // No pause on the established DTB diagnostic path.
+   BuildCpuHob (ArmGetPhysicalAddressBits (), PcdGet8 (PcdPrePiCpuIoSize));
+ 
+   // Set the Boot Mode
+@@ -148,7 +175,7 @@ SecMain (VOID)
+ }
+ 
+ VOID
+-SecEntry (VOID)
++SecEntry (IN UINTN BootDtb)
+ {
+   // Disable Data Cache
+   ArmDisableDataCache ();
+@@ -170,5 +197,5 @@ SecEntry (VOID)
+   ArmWriteVBar ((UINTN)SecVectorTable);
+ 
+   // Enter Main SEC Function
+-  SecMain ();
++  SecMain (BootDtb);
+ }
+diff --git a/Silicon/Silicium/SiliciumPkg/Sec/Sec.inf b/Silicon/Silicium/SiliciumPkg/Sec/Sec.inf
+index 79afd19..ea4aaef 100644
+--- a/Silicon/Silicium/SiliciumPkg/Sec/Sec.inf
++++ b/Silicon/Silicium/SiliciumPkg/Sec/Sec.inf
+@@ -31,6 +31,7 @@
+   SiliciumPkg/SiliciumPkg.dec
+ 
+ [LibraryClasses]
++  FdtLib
+   ArmLib
+   PrePiLib
+   DebugLib
+@@ -51,6 +52,7 @@
+   gArmMpCoreInfoPpiGuid
+ 
+ [Guids]
++  gMarsBootDtbHobGuid
+   gArmMpCoreInfoGuid
+ 
+ [Pcd]
+diff --git a/Silicon/Silicium/SiliciumPkg/SiliciumPkg.dec b/Silicon/Silicium/SiliciumPkg/SiliciumPkg.dec
+index 99cd697..fa58818 100644
+--- a/Silicon/Silicium/SiliciumPkg/SiliciumPkg.dec
++++ b/Silicon/Silicium/SiliciumPkg/SiliciumPkg.dec
+@@ -8,6 +8,7 @@
+   Include                              # Root Include for the Package
+ 
+ [Guids]
++  gMarsBootDtbHobGuid = { 0x759aa318, 0x560b, 0x4ad1, { 0x94, 0xb2, 0x51, 0xbc, 0x08, 0x6a, 0xe7, 0xd4 } }
+   gSiliciumPkgTokenSpaceGuid          = { 0x055720A6, 0xA739, 0x0047, { 0xBE, 0xC1, 0x67, 0xFC, 0x38, 0x34, 0x54, 0x53 } }
+ 
+ [Protocols]

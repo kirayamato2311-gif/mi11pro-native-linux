@@ -1,0 +1,309 @@
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dsc.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dsc.c
+index 509dbaa51..12e79a71a 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dsc.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_hw_dsc.c
+@@ -50,6 +50,7 @@ static void dpu_hw_dsc_config(struct dpu_hw_dsc *hw_dsc,
+ 	u32 slice_last_group_size;
+ 	u32 det_thresh_flatness;
+ 	bool is_cmd_mode = !(mode & DSC_MODE_VIDEO);
++	bool input_10_bits = dsc->bits_per_component == 10;
+ 
+ 	DPU_REG_WRITE(c, DSC_COMMON_MODE, mode);
+ 
+@@ -66,7 +67,7 @@ static void dpu_hw_dsc_config(struct dpu_hw_dsc *hw_dsc,
+ 	data |= (dsc->line_buf_depth << 3);
+ 	data |= (dsc->simple_422 << 2);
+ 	data |= (dsc->convert_rgb << 1);
+-	data |= dsc->bits_per_component;
++	data |= input_10_bits;
+ 
+ 	DPU_REG_WRITE(c, DSC_ENC, data);
+ 
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_host.c b/drivers/gpu/drm/msm/dsi/dsi_host.c
+index 74c6c118b..037dd186c 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -848,6 +848,7 @@ static void dsi_update_dsc_timing(struct msm_dsi_host *msm_host, bool is_cmd_mod
+ 	u32 slice_per_intf, total_bytes_per_intf;
+ 	u32 pkt_per_line;
+ 	u32 eol_byte_num;
++	u32 bytes_per_pkt;
+ 
+ 	/* first calculate dsc parameters and then program
+ 	 * compress mode registers
+@@ -855,16 +856,12 @@ static void dsi_update_dsc_timing(struct msm_dsi_host *msm_host, bool is_cmd_mod
+ 	slice_per_intf = msm_dsc_get_slices_per_intf(dsc, hdisplay);
+ 
+ 	total_bytes_per_intf = dsc->slice_chunk_size * slice_per_intf;
++	bytes_per_pkt = dsc->slice_chunk_size * msm_host->slice_per_pkt;
+ 
+ 	eol_byte_num = total_bytes_per_intf % 3;
+ 
+-	/*
+-	 * Typically, pkt_per_line = slice_per_intf * slice_per_pkt.
+-	 *
+-	 * Since the current driver only supports slice_per_pkt = 1,
+-	 * pkt_per_line will be equal to slice per intf for now.
+-	 */
+-	pkt_per_line = slice_per_intf * msm_host->slice_per_pkt;
++	/* Two slices in one packet reduce the number of packets per line. */
++	pkt_per_line = slice_per_intf / msm_host->slice_per_pkt;
+ 
+ 	if (is_cmd_mode) /* packet data type */
+ 		reg = DSI_COMMAND_COMPRESSION_MODE_CTRL_STREAM0_DATATYPE(MIPI_DSI_DCS_LONG_WRITE);
+@@ -887,7 +884,7 @@ static void dsi_update_dsc_timing(struct msm_dsi_host *msm_host, bool is_cmd_mod
+ 		reg_ctrl |= reg;
+ 
+ 		reg_ctrl2 &= ~DSI_COMMAND_COMPRESSION_MODE_CTRL2_STREAM0_SLICE_WIDTH__MASK;
+-		reg_ctrl2 |= DSI_COMMAND_COMPRESSION_MODE_CTRL2_STREAM0_SLICE_WIDTH(dsc->slice_chunk_size);
++		reg_ctrl2 |= DSI_COMMAND_COMPRESSION_MODE_CTRL2_STREAM0_SLICE_WIDTH(bytes_per_pkt);
+ 
+ 		dsi_write(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL, reg_ctrl);
+ 		dsi_write(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL2, reg_ctrl2);
+@@ -1786,11 +1783,36 @@ static int dsi_populate_dsc_params(struct msm_dsi_host *msm_host, struct drm_dsc
+ 		return -EINVAL;
+ 	}
+ 
+-	if (dsc->bits_per_component != 8) {
+-		DRM_DEV_ERROR(&msm_host->pdev->dev, "DSI does not support bits_per_component != 8 yet\n");
++	switch (dsc->bits_per_component) {
++	case 8:
++	case 10:
++	case 12:
++		break;
++	default:
++		DRM_DEV_ERROR(&msm_host->pdev->dev,
++			"Unsupported DSC bits_per_component: %u\n", dsc->bits_per_component);
+ 		return -EOPNOTSUPP;
+ 	}
+ 
++	/* Experimental mars factory DSC PPS: the panel driver decodes and
++	 * roundtrip-validates every byte before attach. Keep the encoder's
++	 * parameters identical to the PPS delivered to this particular panel.
++	 * Other devices continue to use the generic RC calculation below.
++	 */
++	if (of_property_read_bool(msm_host->pdev->dev.of_node,
++				 "qcom,preserve-mars-factory-dsc-pps")) {
++		if (dsc->dsc_version_major != 1 || dsc->dsc_version_minor != 1 ||
++		    dsc->bits_per_component != 10 || dsc->bits_per_pixel != 128 ||
++		    dsc->pic_width != 1440 || dsc->pic_height != 3200 ||
++		    dsc->slice_width != 720 || dsc->slice_height != 50 ||
++		    dsc->slice_count != 2 || dsc->rc_model_size != 8192 ||
++		    !dsc->slice_chunk_size || !dsc->initial_dec_delay)
++			return -EINVAL;
++		DRM_DEV_INFO(&msm_host->pdev->dev,
++			"Using validated mars 10bpc factory DSC PPS\n");
++		return 0;
++	}
++
+ 	dsc->simple_422 = 0;
+ 	dsc->convert_rgb = 1;
+ 	dsc->vbr_enable = 0;
+diff --git a/drivers/iommu/arm/arm-smmu/arm-smmu.c b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+index d6d1a2a55..04c39bf18 100644
+--- a/drivers/iommu/arm/arm-smmu/arm-smmu.c
++++ b/drivers/iommu/arm/arm-smmu/arm-smmu.c
+@@ -1589,6 +1589,8 @@ static void arm_smmu_device_reset(struct arm_smmu_device *smmu)
+ 	int i;
+ 	u32 reg;
+ 
++	dev_warn(smmu->dev, "MARS RESET: global FSR\n");
++	msleep(100);
+ 	/* clear global FSR */
+ 	reg = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_sGFSR);
+ 	arm_smmu_gr0_write(smmu, ARM_SMMU_GR0_sGFSR, reg);
+@@ -1597,19 +1599,40 @@ static void arm_smmu_device_reset(struct arm_smmu_device *smmu)
+ 	 * Reset stream mapping groups: Initial values mark all SMRn as
+ 	 * invalid and all S2CRn as bypass unless overridden.
+ 	 */
+-	for (i = 0; i < smmu->num_mapping_groups; ++i)
+-		arm_smmu_write_sme(smmu, i);
++	dev_warn(smmu->dev, "MARS RESET: stream mappings\n");
++	msleep(100);
++	for (i = 0; i < smmu->num_mapping_groups; ++i) {
++        dev_warn(smmu->dev, "MARS SME index=%d id=%x valid=%d type=%d cb=%u\n",
++            i, smmu->smrs ? smmu->smrs[i].id : 0,
++            smmu->smrs ? smmu->smrs[i].valid : 0,
++            smmu->s2crs[i].type, smmu->s2crs[i].cbndx);
++        msleep(20);
++        /* Diagnostic only: preserve the active USB transport stream. */
++        if (of_device_is_compatible(smmu->dev->of_node, "qcom,sm8350-smmu-500") &&
++            smmu->smrs && smmu->smrs[i].valid && smmu->smrs[i].id == 0) {
++            dev_warn(smmu->dev, "MARS preserving USB stream index=%d raw_s2cr=%x\n",
++                i, arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_S2CR(i)));
++            continue;
++        }
++        arm_smmu_write_sme(smmu, i);
++    }
+ 
+ 	/* Make sure all context banks are disabled and clear CB_FSR  */
++	dev_warn(smmu->dev, "MARS RESET: context banks\n");
++	msleep(100);
+ 	for (i = 0; i < smmu->num_context_banks; ++i) {
+ 		arm_smmu_write_context_bank(smmu, i);
+ 		arm_smmu_cb_write(smmu, i, ARM_SMMU_CB_FSR, ARM_SMMU_FSR_FAULT);
+ 	}
+ 
++	dev_warn(smmu->dev, "MARS RESET: TLB invalidate\n");
++	msleep(100);
+ 	/* Invalidate the TLB, just in case */
+ 	arm_smmu_gr0_write(smmu, ARM_SMMU_GR0_TLBIALLH, QCOM_DUMMY_VAL);
+ 	arm_smmu_gr0_write(smmu, ARM_SMMU_GR0_TLBIALLNSNH, QCOM_DUMMY_VAL);
+ 
++	dev_warn(smmu->dev, "MARS RESET: read control\n");
++	msleep(100);
+ 	reg = arm_smmu_gr0_read(smmu, ARM_SMMU_GR0_sCR0);
+ 
+ 	/* Enable fault reporting */
+@@ -1638,11 +1661,17 @@ static void arm_smmu_device_reset(struct arm_smmu_device *smmu)
+ 	if (smmu->features & ARM_SMMU_FEAT_EXIDS)
+ 		reg |= ARM_SMMU_sCR0_EXIDENABLE;
+ 
++	dev_warn(smmu->dev, "MARS RESET: platform reset\n");
++	msleep(100);
+ 	if (smmu->impl && smmu->impl->reset)
+ 		smmu->impl->reset(smmu);
+ 
++	dev_warn(smmu->dev, "MARS RESET: global sync\n");
++	msleep(100);
+ 	/* Push the button */
+ 	arm_smmu_tlb_sync_global(smmu);
++	dev_warn(smmu->dev, "MARS RESET: write control\n");
++	msleep(100);
+ 	arm_smmu_gr0_write(smmu, ARM_SMMU_GR0_sCR0, reg);
+ }
+ 
+@@ -2082,6 +2111,7 @@ static int arm_smmu_device_probe(struct platform_device *pdev)
+ 	 */
+ 	smmu->numpage = resource_size(res);
+ 
++	dev_warn(smmu->dev, "MARS SMMU before: smmu = arm_smmu_impl_init(smmu);\n");
+ 	smmu = arm_smmu_impl_init(smmu);
+ 	if (IS_ERR(smmu))
+ 		return PTR_ERR(smmu);
+@@ -2119,6 +2149,7 @@ static int arm_smmu_device_probe(struct platform_device *pdev)
+ 	if (err)
+ 		return err;
+ 
++	dev_warn(smmu->dev, "MARS SMMU before: err = arm_smmu_device_cfg_probe(smmu);\n");
+ 	err = arm_smmu_device_cfg_probe(smmu);
+ 	if (err)
+ 		return err;
+@@ -2173,7 +2204,9 @@ static int arm_smmu_device_probe(struct platform_device *pdev)
+ 	/* Check for RMRs and install bypass SMRs if any */
+ 	arm_smmu_rmr_install_bypass_smr(smmu);
+ 
++	dev_warn(smmu->dev, "MARS SMMU before: arm_smmu_device_reset(smmu);\n");
+ 	arm_smmu_device_reset(smmu);
++	dev_warn(smmu->dev, "MARS SMMU before: arm_smmu_test_smr_masks(smmu);\n");
+ 	arm_smmu_test_smr_masks(smmu);
+ 
+ 	/*
+@@ -2229,6 +2262,7 @@ static int __maybe_unused arm_smmu_runtime_resume(struct device *dev)
+ 	if (ret)
+ 		return ret;
+ 
++	dev_warn(smmu->dev, "MARS SMMU before: arm_smmu_device_reset(smmu);\n");
+ 	arm_smmu_device_reset(smmu);
+ 
+ 	return 0;
+diff --git a/drivers/pinctrl/qcom/pinctrl-msm.c b/drivers/pinctrl/qcom/pinctrl-msm.c
+index 395040346..40c83ecfa 100644
+--- a/drivers/pinctrl/qcom/pinctrl-msm.c
++++ b/drivers/pinctrl/qcom/pinctrl-msm.c
+@@ -1515,8 +1515,12 @@ int msm_pinctrl_probe(struct platform_device *pdev,
+ 		pctrl->phys_base[0] = res->start;
+ 	}
+ 
++	dev_warn(&pdev->dev, "MARS TLMM: pm reset\n");
++	msleep(100);
+ 	msm_pinctrl_setup_pm_reset(pctrl);
+ 
++	dev_warn(&pdev->dev, "MARS TLMM: irq\n");
++	msleep(100);
+ 	pctrl->irq = platform_get_irq(pdev, 0);
+ 	if (pctrl->irq < 0)
+ 		return pctrl->irq;
+@@ -1529,12 +1533,16 @@ int msm_pinctrl_probe(struct platform_device *pdev,
+ 	pctrl->desc.pins = pctrl->soc->pins;
+ 	pctrl->desc.npins = pctrl->soc->npins;
+ 
++	dev_warn(&pdev->dev, "MARS TLMM: register pinctrl\n");
++	msleep(100);
+ 	pctrl->pctrl = devm_pinctrl_register(&pdev->dev, &pctrl->desc, pctrl);
+ 	if (IS_ERR(pctrl->pctrl)) {
+ 		dev_err(&pdev->dev, "Couldn't register pinctrl driver\n");
+ 		return PTR_ERR(pctrl->pctrl);
+ 	}
+ 
++	dev_warn(&pdev->dev, "MARS TLMM: gpio init\n");
++	msleep(100);
+ 	ret = msm_gpio_init(pctrl);
+ 	if (ret)
+ 		return ret;
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index ec163d1bc..004de2925 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -345,6 +345,12 @@ static int qcom_battmgr_request_property(struct qcom_battmgr *battmgr, int opcod
+ 		.value = cpu_to_le32(value),
+ 	};
+ 
++	/* Mars inserts BATT_CONSTANT_CURRENT at wire property 12. */
++	if (of_machine_is_compatible("xiaomi,mars") &&
++	    (opcode == BATTMGR_BAT_PROPERTY_GET || opcode == BATTMGR_BAT_PROPERTY_SET) &&
++	    property >= BATT_TEMP)
++		request.property = cpu_to_le32(property + 1);
++
+ 	return qcom_battmgr_request(battmgr, &request, sizeof(request));
+ }
+ 
+@@ -1090,12 +1096,15 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 	switch (opcode) {
+ 	case BATTMGR_BAT_PROPERTY_GET:
+ 		property = le32_to_cpu(resp->intval.property);
++		if (of_machine_is_compatible("xiaomi,mars") && property >= 13)
++			property--;
+ 		if (property == BATT_MODEL_NAME) {
+ 			if (payload_len != sizeof(resp->strval)) {
+ 				dev_warn(battmgr->dev,
+ 					 "invalid payload length for BATT_MODEL_NAME request: %zd\n",
+ 					 payload_len);
+ 				battmgr->error = -ENODATA;
++				complete(&battmgr->ack);
+ 				return;
+ 			}
+ 		} else {
+@@ -1104,6 +1113,7 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 					 "invalid payload length for %#x request: %zd\n",
+ 					 property, payload_len);
+ 				battmgr->error = -ENODATA;
++				complete(&battmgr->ack);
+ 				return;
+ 			}
+ 
+diff --git a/drivers/remoteproc/qcom_q6v5_pas.c b/drivers/remoteproc/qcom_q6v5_pas.c
+index 913a5d206..76d80831f 100644
+--- a/drivers/remoteproc/qcom_q6v5_pas.c
++++ b/drivers/remoteproc/qcom_q6v5_pas.c
+@@ -863,7 +863,7 @@ static const struct adsp_data sm8350_adsp_resource = {
+ 	.crash_reason_smem = 423,
+ 	.firmware_name = "adsp.mdt",
+ 	.pas_id = 1,
+-	.auto_boot = true,
++	.auto_boot = false,
+ 	.proxy_pd_names = (char*[]){
+ 		"lcx",
+ 		"lmx",
+diff --git a/drivers/soc/qcom/pmic_glink.c b/drivers/soc/qcom/pmic_glink.c
+index 914057331..1196e79e6 100644
+--- a/drivers/soc/qcom/pmic_glink.c
++++ b/drivers/soc/qcom/pmic_glink.c
+@@ -341,6 +341,7 @@ static const unsigned long pmic_glink_sm8450_client_mask = BIT(PMIC_GLINK_CLIENT
+ 							   BIT(PMIC_GLINK_CLIENT_UCSI);
+ 
+ static const struct of_device_id pmic_glink_of_match[] = {
++	{ .compatible = "qcom,sm8350-pmic-glink", .data = &pmic_glink_sm8450_client_mask },
+ 	{ .compatible = "qcom,sm8450-pmic-glink", .data = &pmic_glink_sm8450_client_mask },
+ 	{ .compatible = "qcom,sm8550-pmic-glink", .data = &pmic_glink_sm8450_client_mask },
+ 	{ .compatible = "qcom,pmic-glink" },

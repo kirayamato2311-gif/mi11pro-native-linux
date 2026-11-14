@@ -1,0 +1,26 @@
+{
+  "snapshot_date": "2026-11-14",
+  "device": {
+    "model": "Xiaomi Mi 11 Pro",
+    "codename": "mars",
+    "soc": "SM8350",
+    "physical_ram_gib_tested": 8
+  },
+  "uefi": {
+    "url": "https://github.com/Project-Silicium/Mu-Silicium.git",
+    "commit": "fb4efb37b4ac289ce83ad94c7acb73defb87955c"
+  },
+  "kernel": {
+    "url": "https://gitlab.com/sm8350-mainline/linux.git",
+    "commit": "dc758a448b70dab6bdf38b976ef8fc81b1d0e169"
+  },
+  "uefi_submodules": [
+    "9f4dbfd7d61acdae69fd5bb48720ce7e53711e25 Binaries (9f4dbfd7)",
+    " 566cf5c8c2c8adf8e1a337ced1d147bc6246856f Common/Mu (566cf5c)",
+    " 9292f9254adb94c5e5bb09a370b9662fcd66a953 Common/Mu_OEM_Sample (9292f92)",
+    " 64f478939955e45faa632c160ae2a75a5ff7ef7f Mu_Basecore (64f4789)",
+    " 8c4cdc43abf23cffdeb588621126253bb2c559da Silicium-ACPI (heads/main)",
+    " 67b5686b4419b4cb8caa502711c41815f5279751 Silicon/Silicium/OpensslPkg/Library/OpensslLib/openssl (67b5686)"
+  ],
+  "status": "Research source snapshot; not a complete reproducible installer or binary release"
+}
