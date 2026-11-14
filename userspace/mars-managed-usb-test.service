@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+[Unit]
+Description=Temporary controlled Xiaomi mars USB role test
+ConditionPathExists=/sys/firmware/devicetree/base/chosen/mars,managed-usb-test
+After=mars-pmic-start.service systemd-networkd.service
+Wants=mars-pmic-start.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/mars-managed-usb-test
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

@@ -21,7 +21,7 @@ Linux boots on the phone itself, without Android, Termux, a container, or a virt
 | Power button | One short press blanks/unblanks the display; this is not system suspend |
 | USB connection to PC | Network gadget / SSH works with the separate peripheral configuration |
 | Onten USB Ethernet | Works with fixed-host configuration; direct LAN TCP test about **94.4 Mbps** |
-| USB host ↔ peripheral switching | **Not working automatically**; changing the cable alone is insufficient |
+| USB host ↔ peripheral switching | Experimental userspace workaround: **two PC → Ethernet → PC cycles passed without phone reboot**, using controller reprobe on return to PC; long-term reliability unqualified |
 | Temperature | TSENS readings available; Xiaomi battery property-number correction also tested |
 | Charging while using Ethernet | **Not yet verified**; PD splitter testing pending |
 | Charge limit at 80–90% | **Not implemented** |
@@ -39,7 +39,7 @@ The test phone has physical display line defects. Native display operation does 
 - `patches/linux/`: current kernel changes, **including diagnostic workarounds**.
 - `kernel/config/` and `kernel/devicetree/`: kernel configuration and expanded device trees for the two tested USB modes.
 - `kernel/panel/`: experimental panel driver; generate its command header from your own matching stock panel data.
-- `userspace/`: Power-button daemon source.
+- `userspace/`: Power-button daemon and experimental managed USB role service.
 - `reference/initramfs/`: development init source for review, not a ready-to-run ramdisk.
 - `tools/`: source preparation, panel command generation, FDT inspection and export checks.
 - `sources.json`: exact upstream commits and UEFI submodule revisions.
@@ -50,5 +50,7 @@ The test phone has physical display line defects. Native display operation does 
 2. Read the [known limitations](docs/LIMITATIONS.en.md) / [keterbatasan](docs/LIMITATIONS.id.md), especially SMMU and power handling.
 3. Use [the testing guide](docs/TESTING.en.md) / [panduan pengujian](docs/TESTING.id.md) before reporting hardware results.
 4. See [contributing](CONTRIBUTING.md) and [licenses/provenance](LICENSE.md).
+
+The [managed USB experiment](docs/MANAGED_USB.en.md) / [catatan USB terkontrol](docs/MANAGED_USB.id.md) documents the later role-switching workaround. Normal boot with USB PC connected was also verified after installing that image on the development phone. This does not provide a public installation image or establish simultaneous PD charging + Ethernet.
 
 No proprietary EFI/ADSP/modem firmware, personal partition backups, IMEI/QCN files, SSH credentials or Tailscale state are distributed. This is an independent community experiment, not an official Xiaomi, Qualcomm, Microsoft, or Project Silicium release. Upstream projects are credited without implying endorsement.

@@ -6,7 +6,7 @@ Ini snapshot pengembangan yang telah diperiksa, bukan distribusi yang sudah dipe
 - Port UEFI masih mewarisi sebagian referensi board/binary/ACPI `venus`. SoC SM8350 yang sama tidak membuktikan kesamaan board. Dukungan Windows belum diklaim.
 - Patch SMMU mempertahankan pemetaan stream ID 0 yang sudah aktif pada SM8350 serta memuat log/jeda diagnostik. Cakupannya lebih luas daripada perbaikan khusus Mars yang matang, mengubah perilaku reset, dan perlu peninjauan sebelum digunakan di luar lingkungan riset.
 - Diagnostik pinctrl juga menambah jeda. Auto-boot ADSP dinonaktifkan oleh patch kernel dan membutuhkan startup terkontrol dari userspace.
-- Dua device tree sengaja memakai **mode USB tetap yang berbeda**. Keduanya belum menerapkan perpindahan otomatis, negosiasi peran PD, atau validasi pengisian sambil memakai Ethernet.
+- Dua device tree awal memakai **mode USB tetap yang berbeda**. Tree dan layanan managed-USB tambahan lolos dua siklus singkat PC/Ethernet memakai pemuatan ulang controller. Ini workaround eksperimental, bukan driver perpindahan peran yang telah dikualifikasi atau bukti pengisian sambil memakai Ethernet; lihat `MANAGED_USB.id.md`.
 - Koreksi nomor properti baterai hanya berlaku pada mesin `xiaomi,mars`. Patch yang dipublikasikan belum membuat ambang pengisian atau penulisan kontrol arus. Pembacaan tegangan, kapasitas, dan suhu belum membuktikan kontrol pengisian bekerja.
 - Pengaturan frekuensi CPU, kebijakan termal, dan operasi berkelanjutan belum selesai. Kipas tidak menggantikan kebijakan proteksi termal.
 - Memori reservasi firmware, eksekusi aman, dan subsistem aktif tidak boleh direklamasi hanya karena suatu alamat tampak tidak terpakai. RAM fisik 8 GB tidak seluruhnya tersedia sebagai RAM biasa.
